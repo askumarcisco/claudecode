@@ -1,6 +1,20 @@
 # docker-compose.yml
 version: '3.8'
 
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+  SECRET_KEY: ${SECRET_KEY}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  OUTPUT_DIR: ${OUTPUT_DIR:-/app/outputs}
+  UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
+  WHISPER_MODEL: ${WHISPER_MODEL:-base}
+  REDIS_URL: redis://redis:6379/0
+  # Must include whatever origin the browser actually loads the frontend
+  # from - :5173 (Vite dev, docker-compose.dev.yml) or :80 (nginx prod).
+  # Both localhost and 127.0.0.1 variants: which one a given browser tab
+  # uses depends on how the user typed/bookmarked the URL.
+  ALLOWED_ORIGINS: '${ALLOWED_ORIGINS:-["http://localhost:5173","http://127.0.0.1:5173","http://localhost:80","http://127.0.0.1:80","http://localhost","http://127.0.0.1"]}'
+
 services:
   db:
     image: postgres:15-alpine
@@ -16,26 +30,44 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: ./backend
-    environment:
-      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-      SECRET_KEY: ${SECRET_KEY}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      OUTPUT_DIR: ${OUTPUT_DIR:-/app/outputs}
-      UPLOAD_DIR: ${UPLOAD_DIR:-/app/uploads}
-      WHISPER_MODEL: ${WHISPER_MODEL:-base}
-      # Must include whatever origin the browser actually loads the frontend
-      # from - :5173 (Vite dev, docker-compose.dev.yml) or :80 (nginx prod).
-      ALLOWED_ORIGINS: '${ALLOWED_ORIGINS:-["http://localhost:5173","http://localhost:80","http://localhost"]}'
+    environment: *backend-env
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     ports:
       - "8000:8000"
     volumes:
       # Named volumes so rendered clips and uploaded source videos survive
       # container restarts/recreates.
+      - video_outputs:/app/outputs
+      - video_uploads:/app/uploads
+
+  # Runs the actual download/transcribe/analyze/render pipeline, pulled
+  # from the 'pipeline' Redis queue (see backend/app/queue.py). Isolated
+  # from the API process on purpose: a crashed or killed job only takes
+  # down this container, never the backend service handling requests.
+  worker:
+    build: ./backend
+    command: ["python", "worker.py"]
+    environment: *backend-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
       - video_outputs:/app/outputs
       - video_uploads:/app/uploads
 
