@@ -91,11 +91,30 @@ def _run_whisper_transcribe(audio_path: str, model_size: str) -> list[dict]:
     # actually available, so this worker was using ~4 of the container's
     # 16 CPUs even under full load.
     model = WhisperModel(model_size, compute_type="int8", cpu_threads=os.cpu_count() or 4)
-    segments_generator, _info = model.transcribe(audio_path)
-    return [
-        {"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip()}
-        for seg in segments_generator
-    ]
+    segments_generator, info = model.transcribe(audio_path)
+
+    # model.transcribe() is lazy - decoding actually happens as this
+    # generator is iterated, one segment at a time - and previously
+    # produced zero log output between the initial "Processing audio"
+    # line and completion, making a long transcription indistinguishable
+    # from a hang. Log every ~10% of audio-time progress instead.
+    total_duration = info.duration or 0.0
+    segments: list[dict] = []
+    last_logged_decile = -1
+    for seg in segments_generator:
+        segments.append({"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip()})
+        if total_duration > 0:
+            decile = int((seg.end / total_duration) * 10)
+            if decile > last_logged_decile:
+                logger.info(
+                    "Transcription progress: %d%% (%.1fs / %.1fs, %d segments so far)",
+                    min(decile * 10, 100),
+                    seg.end,
+                    total_duration,
+                    len(segments),
+                )
+                last_logged_decile = decile
+    return segments
 
 
 def transcribe_audio(audio_path: str, model_size: str) -> list[dict]:
