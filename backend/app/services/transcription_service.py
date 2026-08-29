@@ -91,7 +91,19 @@ def _run_whisper_transcribe(audio_path: str, model_size: str) -> list[dict]:
     # actually available, so this worker was using ~4 of the container's
     # 16 CPUs even under full load.
     model = WhisperModel(model_size, compute_type="int8", cpu_threads=os.cpu_count() or 4)
-    segments_generator, info = model.transcribe(audio_path)
+    segments_generator, info = model.transcribe(
+        audio_path,
+        # Skip silence/pauses instead of decoding them - real-world video
+        # (talks, tutorials) is often 20-40% silence, and this is close to
+        # a free speedup since it doesn't affect transcript quality.
+        vad_filter=True,
+        # Default beam_size=5 does a wider search for higher transcript
+        # accuracy at real speed cost. We only need the transcript to be
+        # good enough for the LLM to find key moments in analysis_service,
+        # not to be a publishable transcript, so trade some accuracy for
+        # speed here.
+        beam_size=1,
+    )
 
     # model.transcribe() is lazy - decoding actually happens as this
     # generator is iterated, one segment at a time - and previously
