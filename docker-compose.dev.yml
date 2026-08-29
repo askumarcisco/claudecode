@@ -16,6 +16,19 @@ services:
     # "Cannot allocate memory").
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
 
+  worker:
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /app/__pycache__
+    # Deliberately no --reload / file-watcher here: restart the worker
+    # container manually after code changes (`docker compose restart worker`).
+    # RQ jobs run in forked child processes; if a file watcher crashed the
+    # worker's main process mid-job the same way it crashed uvicorn's, the
+    # in-progress job's process would be orphaned with no supervisor to
+    # ever mark it failed until the next startup's orphan-recovery pass.
+    command: ["python", "worker.py"]
+
   frontend:
     build:
       context: ./frontend

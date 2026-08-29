@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import json,sys; d=json.load(sys.stdin); f=(d.get('tool_response') or {}).get('filePath') or (d.get('tool_input') or {}).get('file_path'); print(f) if f else None\" | tr -d '\\r' | { read -r f; if [ -n \"$f\" ]; then git -C \"C:\\VS\\claudecode-test\" add -- \"$f\" 2>/dev/null; if ! git -C \"C:\\VS\\claudecode-test\" diff --cached --quiet -- \"$f\"; then git -C \"C:\\VS\\claudecode-test\" commit -m \"auto: update $(basename \"$f\")\" >/dev/null 2>&1 && git -C \"C:\\VS\\claudecode-test\" push github main >/dev/null 2>&1; fi; fi; } 2>/dev/null || true",
+            "timeout": 30,
+            "statusMessage": "Auto-committing and pushing change..."
+          }
+        ]
+      }
+    ]
+  }
+}

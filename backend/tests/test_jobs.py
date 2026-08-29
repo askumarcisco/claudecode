@@ -1,9 +1,10 @@
 """Tests for the /api/v1/jobs endpoints.
 
-`run_pipeline` is monkeypatched to a no-op for every test in this module
-(via the autouse `no_op_pipeline` fixture) so job creation never touches
-yt-dlp/ffmpeg/faster-whisper/Anthropic — those are covered in isolation in
-test_pipeline_services.py.
+`enqueue_pipeline` is monkeypatched to a no-op for every test in this
+module (via the autouse `no_op_pipeline` fixture) so job creation never
+touches Redis/RQ or the real pipeline (yt-dlp/ffmpeg/faster-whisper/OpenAI)
+— those are covered in isolation in test_pipeline_services.py and
+test_queue.py.
 """
 
 import pytest
@@ -13,11 +14,12 @@ from app.models.video_job import JobStatus, SourceType, VideoJob
 
 @pytest.fixture(autouse=True)
 def no_op_pipeline(monkeypatch):
-    """Prevent the real pipeline from running as a FastAPI BackgroundTask
-    during job-creation requests in this module."""
+    """Prevent job creation/deletion from touching Redis/RQ during
+    requests in this module."""
     monkeypatch.setattr(
-        "app.services.pipeline_service.run_pipeline", lambda job_id: None
+        "app.routers.jobs.enqueue_pipeline", lambda job_id: "fake-rq-job-id"
     )
+    monkeypatch.setattr("app.queue.cancel_pipeline", lambda rq_job_id: None)
 
 
 def test_create_job_from_url(client, auth_headers):

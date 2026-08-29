@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.database import get_db
 from app.exceptions import ValidationError
 from app.models.user import User
 from app.models.video_job import JobStatus, VideoJob
+from app.queue import enqueue_pipeline
 from app.schemas.job import JobResponse
 from app.services import job_service, upload_service
 
@@ -19,7 +20,6 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 @router.post("/", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
 async def create_job(
-    background_tasks: BackgroundTasks,
     youtube_url: str | None = Form(None),
     file: UploadFile | None = File(None),
     user: User = Depends(get_current_user),
@@ -39,13 +39,13 @@ async def create_job(
         saved_path = await upload_service.save_upload(file, job_id_hint="new")
         job = job_service.create_job_from_upload(db, user.id, saved_path)
 
-    # PIPELINE-AGENT owns app.services.pipeline_service.run_pipeline; it may not
-    # exist yet at the time this module is written, but the import/call is correct
-    # and will resolve once that module lands.
-    from app.services.pipeline_service import run_pipeline
-
-    background_tasks.add_task(run_pipeline, job.id)
-    logger.info("Scheduled pipeline run for job id=%s", job.id)
+    # Runs in a separate worker process (see app/queue.py) rather than a
+    # FastAPI BackgroundTask, so a crashed/killed job can't take the API
+    # process down with it.
+    job.rq_job_id = enqueue_pipeline(job.id)
+    db.commit()
+    db.refresh(job)
+    logger.info("Scheduled pipeline run for job id=%s (rq_job_id=%s)", job.id, job.rq_job_id)
 
     return job
 

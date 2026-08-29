@@ -45,6 +45,11 @@ class VideoJob(Base, TimestampMixin):
     status = Column(Enum(JobStatus), nullable=False, default=JobStatus.queued, index=True)
     error_message = Column(Text, nullable=True)
     output_file_path = Column(String(1000), nullable=True)
+    # RQ job id for this VideoJob's pipeline run, used to target cancellation
+    # (queue.cancel_pipeline) and to detect orphaned jobs on startup
+    # (a non-terminal VideoJob whose rq_job_id is no longer known to Redis
+    # means the worker processing it died without finishing).
+    rq_job_id = Column(String(64), nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="video_jobs")

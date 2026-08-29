@@ -73,9 +73,10 @@ def list_jobs(db: Session, user_id: int) -> list[VideoJob]:
 
 def delete_job(db: Session, job_id: int, user_id: int) -> None:
     job = get_job(db, job_id, user_id)
-    # MVP: allow deleting an in-progress job outright. A "real" cancel would
-    # need to signal the running background task to stop; that's out of
-    # scope here and left for a future iteration.
+    if job.rq_job_id:
+        from app.queue import cancel_pipeline
+
+        cancel_pipeline(job.rq_job_id)
     db.delete(job)
     db.commit()
     logger.info("Deleted job id=%s for user_id=%s", job_id, user_id)
