@@ -96,8 +96,8 @@ class TestCancelPipeline:
 
 
 class TestIsJobActive:
-    @pytest.mark.parametrize("status", ["queued", "started", "deferred", "scheduled"])
-    def test_active_statuses_return_true(self, monkeypatch, status):
+    @pytest.mark.parametrize("status", ["queued", "deferred", "scheduled"])
+    def test_not_yet_started_statuses_return_true(self, monkeypatch, status):
         fake = FakeRQJob(status=status)
         monkeypatch.setattr(Job, "fetch", classmethod(lambda cls, *a, **kw: fake))
 
@@ -116,6 +116,36 @@ class TestIsJobActive:
         )
 
         assert queue_module.is_job_active("job-missing") is False
+
+    def test_started_job_with_live_worker_is_active(self, monkeypatch):
+        fake = FakeRQJob(status="started", worker_name="worker-1")
+        monkeypatch.setattr(Job, "fetch", classmethod(lambda cls, *a, **kw: fake))
+        monkeypatch.setattr(
+            "rq.worker.Worker.all",
+            classmethod(lambda cls, *a, **kw: [FakeWorker(name="worker-1"), FakeWorker(name="worker-2")]),
+        )
+
+        assert queue_module.is_job_active("job-live") is True
+
+    def test_started_job_with_dead_worker_is_not_active(self, monkeypatch):
+        # This is exactly the case that matters: a worker was killed
+        # (crash, OOM, `docker kill`) mid-job. The job's own status field
+        # is stuck at "started" forever - only cross-referencing the live
+        # worker registry reveals it's actually orphaned.
+        fake = FakeRQJob(status="started", worker_name="worker-dead")
+        monkeypatch.setattr(Job, "fetch", classmethod(lambda cls, *a, **kw: fake))
+        monkeypatch.setattr(
+            "rq.worker.Worker.all",
+            classmethod(lambda cls, *a, **kw: [FakeWorker(name="worker-other")]),
+        )
+
+        assert queue_module.is_job_active("job-orphaned") is False
+
+    def test_started_job_with_no_recorded_worker_is_not_active(self, monkeypatch):
+        fake = FakeRQJob(status="started", worker_name=None)
+        monkeypatch.setattr(Job, "fetch", classmethod(lambda cls, *a, **kw: fake))
+
+        assert queue_module.is_job_active("job-no-worker") is False
 
 
 class TestRecoverOrphanedJobs:
