@@ -74,7 +74,7 @@ services:
   frontend:
     build: ./frontend
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_API_URL: ${VITE_API_URL:-http://127.0.0.1:8000}
     ports:
       - "80:80"
     depends_on:
