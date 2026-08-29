@@ -82,7 +82,15 @@ def _run_whisper_transcribe(audio_path: str, model_size: str) -> list[dict]:
     """
     from faster_whisper import WhisperModel
 
-    model = WhisperModel(model_size)
+    # compute_type="int8": faster-whisper/ctranslate2 default to matching
+    # the saved model's precision (float16), which most CPUs can't execute
+    # efficiently and silently falls back to float32 - much slower than
+    # the standard CPU-optimized int8 quantization. cpu_threads: ctranslate2's
+    # own default (cpu_threads=0) does not mean "use all cores" - it picks a
+    # conservative internal default (commonly ~4) regardless of what's
+    # actually available, so this worker was using ~4 of the container's
+    # 16 CPUs even under full load.
+    model = WhisperModel(model_size, compute_type="int8", cpu_threads=os.cpu_count() or 4)
     segments_generator, _info = model.transcribe(audio_path)
     return [
         {"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip()}
