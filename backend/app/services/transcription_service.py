@@ -1,0 +1,113 @@
+"""Audio extraction + speech-to-text transcription for a source video.
+
+External tool calls (ffmpeg, faster-whisper) are isolated behind thin
+functions (`_run_ffmpeg_extract_audio`, `_run_whisper_transcribe`) so tests
+can monkeypatch them without spawning real subprocesses or loading a model.
+"""
+
+import logging
+import os
+import subprocess
+import uuid
+
+from app.exceptions import PipelineError
+
+logger = logging.getLogger(__name__)
+
+
+def _run_ffmpeg_extract_audio(video_path: str, audio_path: str) -> None:
+    """Thin wrapper around the ffmpeg subprocess call. Isolated so tests can
+    monkeypatch this single function instead of spawning a real process."""
+    result = subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-vn",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            audio_path,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr_snippet = (result.stderr or "")[:500]
+        raise PipelineError(f"ffmpeg audio extraction failed: {stderr_snippet}")
+
+
+def extract_audio(video_path: str, dest_dir: str) -> str:
+    """Extract a mono 16kHz WAV audio track from `video_path` into `dest_dir`.
+
+    Returns the path to the extracted audio file.
+    Raises PipelineError on failure.
+    """
+    if not os.path.isfile(video_path):
+        raise PipelineError(f"Video file not found for audio extraction: '{video_path}'")
+
+    os.makedirs(dest_dir, exist_ok=True)
+    audio_filename = f"{uuid.uuid4()}.wav"
+    audio_path = os.path.join(dest_dir, audio_filename)
+
+    try:
+        _run_ffmpeg_extract_audio(video_path, audio_path)
+    except PipelineError:
+        raise
+    except FileNotFoundError as e:
+        raise PipelineError("ffmpeg is not installed or not on PATH") from e
+    except Exception as e:  # noqa: BLE001
+        raise PipelineError(f"Unexpected error extracting audio from '{video_path}': {e}") from e
+
+    if not os.path.isfile(audio_path):
+        raise PipelineError(
+            f"ffmpeg reported success but audio output is missing (expected '{audio_path}')"
+        )
+
+    logger.info("Extracted audio video_path=%s audio_path=%s", video_path, audio_path)
+    return audio_path
+
+
+def _run_whisper_transcribe(audio_path: str, model_size: str) -> list[dict]:
+    """Thin wrapper around faster-whisper. Isolated so tests can monkeypatch
+    this single function instead of loading a real model.
+
+    NOTE: loading a fresh WhisperModel on every call is simple-but-slow for
+    this MVP (model weights are re-read from disk/re-initialized each time).
+    A future optimization is a process-wide singleton/cache keyed by
+    model_size, loaded lazily on first use and reused across pipeline runs.
+    """
+    from faster_whisper import WhisperModel
+
+    model = WhisperModel(model_size)
+    segments_generator, _info = model.transcribe(audio_path)
+    return [
+        {"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip()}
+        for seg in segments_generator
+    ]
+
+
+def transcribe_audio(audio_path: str, model_size: str) -> list[dict]:
+    """Transcribe `audio_path` using faster-whisper.
+
+    Returns a list of {"start": float, "end": float, "text": str} segments.
+    Raises PipelineError on failure.
+    """
+    if not os.path.isfile(audio_path):
+        raise PipelineError(f"Audio file not found for transcription: '{audio_path}'")
+
+    try:
+        segments = _run_whisper_transcribe(audio_path, model_size)
+    except PipelineError:
+        raise
+    except Exception as e:  # noqa: BLE001 - faster-whisper/ctranslate2 raise many types
+        logger.error("Transcription failed for audio_path=%s: %s", audio_path, e)
+        raise PipelineError(f"Failed to transcribe audio '{audio_path}': {e}") from e
+
+    logger.info(
+        "Transcribed audio_path=%s model=%s segments=%d", audio_path, model_size, len(segments)
+    )
+    return segments

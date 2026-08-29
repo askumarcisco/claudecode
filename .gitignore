@@ -1,0 +1,37 @@
+# --- Python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node ---
+node_modules/
+dist/
+.vite/
+npm-debug.log*
+
+# --- Env files ---
+.env
+.env.*
+!.env.example
+
+# --- Project local artifacts ---
+# Keep these directories tracked (see .gitkeep) but ignore generated content.
+backend/outputs/*
+!backend/outputs/.gitkeep
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# --- IDE ---
+.vscode/
+.idea/
+
+# --- OS ---
+.DS_Store
+Thumbs.db

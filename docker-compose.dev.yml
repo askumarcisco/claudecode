@@ -1,0 +1,28 @@
+# docker-compose.dev.yml
+# Dev override: bind-mount source for hot reload.
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+version: '3.8'
+
+services:
+  backend:
+    volumes:
+      - ./backend:/app
+      - /app/.venv
+      - /app/__pycache__
+    # --reload-dir restricts the file watcher to source code only. Without
+    # it, uvicorn watches the whole /app tree, including uploads/ and
+    # outputs/ - large in-progress video downloads there flood the watcher
+    # with filesystem events fast enough to crash it (WatchfilesRustInternalError:
+    # "Cannot allocate memory").
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "app"]
+
+  frontend:
+    build:
+      context: ./frontend
+      target: build
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    command: ["npm", "run", "dev", "--", "--host"]

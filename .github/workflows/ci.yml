@@ -1,0 +1,37 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # NOTE: ffmpeg is NOT installed here. It's only needed at runtime for
+      # actual audio extraction / video rendering. Pipeline tests should mock
+      # yt-dlp/ffmpeg/faster-whisper calls rather than exercise the real
+      # binaries, so the test job stays fast and doesn't need it installed.
+      - name: Backend Tests
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pytest --cov=app --cov-fail-under=80
+
+      - name: Frontend Tests
+        run: |
+          cd frontend
+          npm ci
+          npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker-compose build

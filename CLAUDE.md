@@ -1,35 +1,54 @@
-# CLAUDE.md - Project Rules
+# CLAUDE.md - Video Creator Project Rules
 
-> Rules Claude follows in every conversation.
+> Project-specific rules for Claude Code. This file is read automatically.
 
 ---
 
-## Tech Stack
+## Project Overview
 
-- **Backend:** FastAPI + Python 3.11+
-- **Frontend:** React + TypeScript + Vite
-- **Database:** PostgreSQL + SQLAlchemy
-- **Auth:** JWT + Google OAuth
-- **UI:** Chakra UI or Tailwind + Framer Motion
+**Project Name:** Video Creator
+**Description:** Submit a YouTube URL (or upload a video), and get back a ~60-second clip that captures what the original video was really trying to say. Output is written to a local folder.
+**Tech Stack:**
+- Backend: FastAPI + Python 3.11+
+- Frontend: React + TypeScript + Vite
+- Database: PostgreSQL + SQLAlchemy
+- Auth: JWT (email/password only, no OAuth)
+- UI: Chakra UI
+- Media/AI: `yt-dlp`, `ffmpeg`, local Whisper (`faster-whisper`), OpenAI API
 
 ---
 
 ## Project Structure
 
 ```
-project/
+video-creator/
 ├── backend/
 │   ├── app/
 │   │   ├── main.py, config.py, database.py
-│   │   ├── models/, schemas/, routers/, services/, auth/
+│   │   ├── models/
+│   │   │   ├── user.py
+│   │   │   ├── video_job.py
+│   │   │   ├── transcript_segment.py
+│   │   │   └── selected_moment.py
+│   │   ├── schemas/
+│   │   ├── routers/
+│   │   │   ├── auth.py
+│   │   │   └── jobs.py
+│   │   ├── services/
+│   │   │   ├── download_service.py    # yt-dlp
+│   │   │   ├── transcription_service.py  # ffmpeg + Whisper
+│   │   │   ├── analysis_service.py    # OpenAI API
+│   │   │   └── render_service.py      # ffmpeg cut/concat
+│   │   └── auth/
 │   ├── alembic/
+│   ├── outputs/          # local output folder (gitignored, Docker volume)
 │   └── tests/
 ├── frontend/
 │   └── src/
 │       ├── components/, pages/, hooks/, services/, context/, types/
-├── skills/           # 5 skill files
-├── agents/           # Agent definitions
-└── .claude/commands/ # /generate-prp, /execute-prp
+├── skills/
+├── agents/
+└── .claude/commands/  # /generate-prp, /execute-prp
 ```
 
 ---
@@ -43,17 +62,17 @@ def get_user(db: Session, user_id: int) -> User:
     pass
 
 # Async endpoints
-@router.get("/users/{id}")
-async def get_user(id: int, db: Session = Depends(get_db)):
+@router.get("/jobs/{id}")
+async def get_job(id: int, db: Session = Depends(get_db)):
     pass
 ```
 
 ### TypeScript
 ```typescript
 // Interfaces required - NO any types
-interface User { id: number; email: string; }
+interface VideoJob { id: number; status: JobStatus; outputUrl?: string; }
 
-const fetchUser = async (id: number): Promise<User> => { ... };
+const fetchJob = async (id: number): Promise<VideoJob> => { ... };
 ```
 
 ---
@@ -62,10 +81,21 @@ const fetchUser = async (id: number): Promise<User> => { ... };
 
 - `print()` → use `logging`
 - Plain passwords → use bcrypt
-- Hardcoded secrets → use env vars
+- Hardcoded secrets → use env vars (incl. `OPENAI_API_KEY`)
 - `any` type in TypeScript
 - `console.log` in production
-- Inline styles → use UI framework
+- Inline styles → use Chakra UI
+- Blocking the event loop with synchronous ffmpeg/Whisper calls in an `async def` route — run pipeline steps as FastAPI `BackgroundTasks` or in a thread/process executor
+
+---
+
+## Pipeline-Specific Rules
+
+- Every `VideoJob` pipeline step (download, transcribe, analyze, render) must be independently unit-testable with the external tool (`yt-dlp`/`ffmpeg`/Whisper/Claude) mocked out — no test should require real network access or a real video file.
+- On any pipeline step failure: set `VideoJob.status = "failed"`, persist a human-readable `error_message`, and never let one job's failure crash the process or block other jobs.
+- Validate YouTube URLs and uploaded file types/sizes at the API boundary before a job is created.
+- The local output folder path is configurable via env var (`OUTPUT_DIR`), never hardcoded, and must be a persisted Docker volume.
+- Never commit sample/downloaded video or audio files to the repo.
 
 ---
 
@@ -74,7 +104,7 @@ const fetchUser = async (id: number): Promise<User> => { ... };
 ```
 1. Edit INITIAL.md (define product)
 2. /generate-prp INITIAL.md
-3. /execute-prp PRPs/[name]-prp.md
+3. /execute-prp PRPs/video-creator-prp.md
 ```
 
 ---
@@ -96,9 +126,9 @@ const fetchUser = async (id: number): Promise<User> => { ... };
 | Agent | Role |
 |-------|------|
 | DATABASE-AGENT | Models + migrations |
-| BACKEND-AGENT | API + auth |
+| BACKEND-AGENT | API + auth + pipeline services |
 | FRONTEND-AGENT | UI + pages |
-| DEVOPS-AGENT | Docker + CI/CD |
+| DEVOPS-AGENT | Docker (incl. ffmpeg + Whisper model) + CI/CD |
 
 ---
 
@@ -115,9 +145,10 @@ docker-compose build
 ## Environment Variables
 
 ```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
+DATABASE_URL=postgresql://user:pass@localhost:5432/video_creator
 SECRET_KEY=your-secret-key
-GOOGLE_CLIENT_ID=xxx
-GOOGLE_CLIENT_SECRET=xxx
+OPENAI_API_KEY=your-openai-api-key
+OUTPUT_DIR=/data/outputs
+WHISPER_MODEL=base
 VITE_API_URL=http://localhost:8000
 ```
